@@ -116,45 +116,58 @@ export default function Home() {
       syncStatus: "pending",
     });
 
-    // 2. Generate custom scheduled tasks based on planting date
+    // 2. Generate exactly 4 custom scheduled tasks based on planting date
     const d1 = new Date(newProjDate);
     const d2 = new Date(newProjDate);
     const d3 = new Date(newProjDate);
+    const d4 = new Date(newProjDate);
 
-    d1.setDate(d1.getDate() + 1); // Water tomorrow
-    d2.setDate(d2.getDate() + 14); // Fertiziler in 2 weeks
-    d3.setDate(d3.getDate() + 90); // Harvest in 3 months
+    d1.setDate(d1.getDate() + 1);  // Day +1: Water
+    d2.setDate(d2.getDate() + 14); // Day +14: Fertilize
+    d3.setDate(d3.getDate() + 30); // Day +30: Prevent pests
+    d4.setDate(d4.getDate() + 90); // Day +90: Harvest
 
     await db.logbooks.bulkAdd([
       {
         projectId: projId,
-        title: "Penyiraman Awal Sektor Baru",
+        title: "Penyiraman Awal Lahan",
         category: "Penyiraman",
         scheduledDate: d1.toISOString().split("T")[0],
         isCompleted: false,
-        notes: `Penyiraman pertama untuk benih ${newProjType}`,
+        notes: `Lakukan pengairan menyeluruh untuk merangsang pertumbuhan awal bibit ${newProjType}.`,
         createdAt: new Date(),
         updatedAt: new Date(),
         syncStatus: "pending",
       },
       {
         projectId: projId,
-        title: "Pemupukan Dasar Awal",
+        title: "Pemberian Pupuk Dasar NPK",
         category: "Pemupukan",
         scheduledDate: d2.toISOString().split("T")[0],
         isCompleted: false,
-        notes: "Gunakan pupuk NPK berimbang",
+        notes: "Gunakan pupuk NPK dengan nitrogen tinggi untuk memacu vegetatif daun.",
         createdAt: new Date(),
         updatedAt: new Date(),
         syncStatus: "pending",
       },
       {
         projectId: projId,
-        title: `Panen Raya ${newProjName}`,
-        category: "Panen",
+        title: "Proteksi Hama & Penyakit (Pencegahan)",
+        category: "Proteksi",
         scheduledDate: d3.toISOString().split("T")[0],
         isCompleted: false,
-        notes: "Target panen kualitas premium",
+        notes: "Penyemprotan fungisida/pestisida nabati secara tipis di bagian bawah daun.",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        syncStatus: "pending",
+      },
+      {
+        projectId: projId,
+        title: "Panen Raya Hasil Tanam",
+        category: "Panen",
+        scheduledDate: d4.toISOString().split("T")[0],
+        isCompleted: false,
+        notes: `Pemanenan serentak buah/biji ${newProjType} yang telah memasuki fase matang optimal.`,
         createdAt: new Date(),
         updatedAt: new Date(),
         syncStatus: "pending",
@@ -311,6 +324,71 @@ export default function Home() {
                   {globalNetProfit >= 0 ? "+" : ""}Rp {globalNetProfit.toLocaleString("id-ID")}
                 </span>
                 <span className="text-[10px] text-stone-400 font-medium mt-1">Status BEP Mandiri</span>
+              </div>
+            </section>
+
+            {/* Kisi Kartu Proyek Lahan Tani Anda */}
+            <section className="flex flex-col gap-3">
+              <h4 className="font-bold text-stone-800 text-base px-1">Daftar Proyek Lahan Tani</h4>
+              <div className="grid grid-cols-1 gap-3.5">
+                {projects.map((p) => {
+                  const pTasks = allTasks.filter(t => t.projectId === p.id);
+                  const pCompleted = pTasks.filter(t => t.isCompleted).length;
+                  const pProgress = pTasks.length > 0 ? Math.round((pCompleted / pTasks.length) * 100) : 0;
+                  const isActive = selectedProjectId === p.id;
+                  
+                  // Plant type icon mapper
+                  let plantIcon = "🌾";
+                  if (p.plantType === "Cabai") plantIcon = "🌶️";
+                  if (p.plantType === "Jagung") plantIcon = "🌽";
+                  if (p.plantType === "Tomat") plantIcon = "🍅";
+
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => setSelectedProjectId(p.id || null)}
+                      className={`bg-white rounded-2xl p-4 shadow-sm border transition-all cursor-pointer flex flex-col gap-3 hover:border-emerald-300 ${
+                        isActive 
+                          ? "border-emerald-600 ring-2 ring-emerald-500/20 shadow-md" 
+                          : "border-stone-200/60"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 bg-emerald-50 rounded-xl flex items-center justify-center text-lg shadow-inner">
+                            {plantIcon}
+                          </div>
+                          <div>
+                            <h5 className="font-bold text-stone-800 text-sm">{p.name}</h5>
+                            <p className="text-[10px] text-stone-400 font-semibold uppercase mt-0.5">
+                              {p.plantType} • Ditanam {p.plantingDate}
+                            </p>
+                          </div>
+                        </div>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                          isActive 
+                            ? "bg-emerald-100 text-emerald-800" 
+                            : "bg-stone-100 text-stone-500"
+                        }`}>
+                          {isActive ? "Aktif Dipilih" : "Klik untuk Pilih"}
+                        </span>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between text-xs text-stone-500 mb-1">
+                          <span>Progres Perawatan</span>
+                          <span className="font-bold text-emerald-700">{pProgress}%</span>
+                        </div>
+                        <div className="w-full bg-stone-100 h-2.5 rounded-full overflow-hidden">
+                          <div 
+                            className="bg-emerald-600 h-full rounded-full transition-all duration-500" 
+                            style={{ width: `${pProgress}%` }} 
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </section>
 
