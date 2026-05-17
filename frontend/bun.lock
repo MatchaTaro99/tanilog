@@ -6,6 +6,8 @@
       "name": "frontend",
       "dependencies": {
         "@ducanh2912/next-pwa": "^10.2.9",
+        "dexie": "^4.4.2",
+        "dexie-react-hooks": "^4.4.0",
         "next": "16.2.6",
         "react": "19.2.4",
         "react-dom": "19.2.4",
@@ -622,6 +624,10 @@
     "define-properties": ["define-properties@1.2.1", "", { "dependencies": { "define-data-property": "^1.0.1", "has-property-descriptors": "^1.0.0", "object-keys": "^1.1.1" } }, "sha512-8QmQKqEASLd5nx0U1B1okLElbUuuttJ/AnYmRXbbbGDWh6uS208EjD4Xqq/I9wK7u0v6O08XhTWnt5XtEbR6Dg=="],
 
     "detect-libc": ["detect-libc@2.1.2", "", {}, "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="],
+
+    "dexie": ["dexie@4.4.2", "", {}, "sha512-zMtV8q79EFE5U8FKZvt0Y/77PCU/Hr/RDxv1EDeo228L+m/HTbeN2AjoQm674rhQCX8n3ljK87lajt7UQuZfvw=="],
+
+    "dexie-react-hooks": ["dexie-react-hooks@4.4.0", "", { "peerDependencies": { "dexie": ">=4.2.0-alpha.1 <5.0.0", "react": ">=16" } }, "sha512-ObLXBS5+4BJU8vtSvBx6b9fY6zZYgniAtwxzjCHsUQadgbqYN6935X2/1TWw4Rf2N1aZV1io5/ziox4vKuxABA=="],
 
     "doctrine": ["doctrine@2.1.0", "", { "dependencies": { "esutils": "^2.0.2" } }, "sha512-35mSku4ZXK0vfCuHEDAwt55dg2jNajHZ1odvF+8SSr82EsZY4QmXfuWso8oEd8zRhVObSN18aM0CjSdoBX7zIw=="],
 
