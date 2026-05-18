@@ -14,6 +14,14 @@ export default function Home() {
   const [newProjType, setNewProjType] = useState("Padi");
   const [newProjDate, setNewProjDate] = useState(() => new Date().toISOString().split("T")[0]);
 
+  // Manual Logbook Creation Modal state
+  const [showAddManualLog, setShowAddManualLog] = useState(false);
+  const [manualLogTitle, setManualLogTitle] = useState("");
+  const [manualLogCategory, setManualLogCategory] = useState("Lainnya");
+  const [manualLogDate, setManualLogDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [manualLogNotes, setManualLogNotes] = useState("");
+  const [manualLogIsCompleted, setManualLogIsCompleted] = useState(true);
+
   // Selected project filter for logging and finances
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
 
@@ -179,6 +187,33 @@ export default function Home() {
     setNewProjName("");
     setShowAddProject(false);
     setActiveTab("dashboard");
+  };
+
+  // Add Manual Field Observation / Custom Log
+  const handleCreateManualLog = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualLogTitle.trim() || !selectedProjectId) return;
+
+    await db.logbooks.add({
+      projectId: selectedProjectId,
+      title: manualLogTitle,
+      category: manualLogCategory,
+      scheduledDate: manualLogDate,
+      isCompleted: manualLogIsCompleted,
+      completedDate: manualLogIsCompleted ? manualLogDate : undefined,
+      notes: manualLogNotes || undefined,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      syncStatus: "pending",
+    });
+
+    // Reset Form & Close Modal
+    setManualLogTitle("");
+    setManualLogCategory("Lainnya");
+    setManualLogDate(new Date().toISOString().split("T")[0]);
+    setManualLogNotes("");
+    setManualLogIsCompleted(true);
+    setShowAddManualLog(false);
   };
 
   // Add transaction mutation on Dexie
@@ -420,61 +455,178 @@ export default function Home() {
 
         {/* ==================== TAB 2: LOGBOOK ==================== */}
         {activeTab === "logbook" && (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-5">
             <div className="flex items-center justify-between px-1">
               <div>
                 <h3 className="text-lg font-bold text-stone-800">Catatan Harian Lapangan</h3>
-                <p className="text-xs text-stone-500">Centang kegiatan setelah selesai dilakukan di sawah</p>
+                <p className="text-xs text-stone-500">Pantau dan catat perkembangan tanaman Anda</p>
               </div>
-              <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100">
-                {completedTasksCount}/{tasks.length} Selesai
-              </span>
+              <button 
+                onClick={() => setShowAddManualLog(true)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5 active:scale-95 shrink-0"
+              >
+                <span>➕ Catatan Lapangan</span>
+              </button>
             </div>
 
-            {/* Checklist Container */}
-            <div className="flex flex-col gap-3">
-              {tasks.length > 0 ? (
-                tasks.map(task => (
-                  <div 
-                    key={task.id}
-                    onClick={() => toggleTask(task.id!, task.isCompleted)}
-                    className={`bg-white rounded-2xl p-4 shadow-sm border transition-all duration-200 cursor-pointer flex items-center justify-between select-none ${
-                      task.isCompleted ? "border-emerald-200 bg-emerald-50/20" : "border-stone-200/60 hover:border-stone-300"
-                    }`}
-                  >
-                    <div className="flex items-center gap-4">
-                      {/* Circle Checkbox */}
-                      <div className={`h-6 w-6 rounded-full border-2 flex items-center justify-center transition-all ${
-                        task.isCompleted ? "border-emerald-600 bg-emerald-600 text-white" : "border-stone-300 bg-white"
-                      }`}>
-                        {task.isCompleted && (
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
-                      </div>
-                      <div>
-                        <p className={`text-sm font-bold text-stone-800 ${task.isCompleted ? "line-through text-stone-400" : ""}`}>
-                          {task.title}
-                        </p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] bg-stone-100 text-stone-500 font-semibold px-2 py-0.5 rounded-md">
-                            {task.category}
-                          </span>
-                          <span className="text-[10px] text-stone-400 font-medium">
-                            🕒 {task.scheduledDate}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+            {/* Section 1: Jadwal Perawatan Terencana */}
+            {(() => {
+              const scheduledTasks = tasks.filter(t => ["Penyiraman", "Pemupukan", "Panen", "Proteksi"].includes(t.category));
+              return (
+                <section className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between px-1">
+                    <h4 className="font-bold text-stone-700 text-sm">Jadwal Perawatan Terencana</h4>
+                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-100/60">
+                      {scheduledTasks.filter(t => t.isCompleted).length}/{scheduledTasks.length} Selesai
+                    </span>
                   </div>
-                ))
-              ) : (
-                <div className="bg-white rounded-2xl p-8 border border-stone-200/60 text-center text-stone-400 text-xs">
-                  Belum ada logbook/jadwal tugas untuk proyek lahan ini. Silakan buat Proyek baru untuk meng-generate jadwal otomatis.
-                </div>
-              )}
-            </div>
+
+                  <div className="flex flex-col gap-2.5">
+                    {scheduledTasks.length > 0 ? (
+                      scheduledTasks.map(task => (
+                        <div 
+                          key={task.id}
+                          onClick={() => toggleTask(task.id!, task.isCompleted)}
+                          className={`bg-white rounded-2xl p-4 shadow-sm border transition-all duration-200 cursor-pointer flex items-center justify-between select-none ${
+                            task.isCompleted ? "border-emerald-200 bg-emerald-50/20" : "border-stone-200/60 hover:border-stone-300"
+                          }`}
+                        >
+                          <div className="flex items-center gap-4">
+                            {/* Circle Checkbox */}
+                            <div className={`h-6 w-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                              task.isCompleted ? "border-emerald-600 bg-emerald-600 text-white" : "border-stone-300 bg-white"
+                            }`}>
+                              {task.isCompleted && (
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                </svg>
+                              )}
+                            </div>
+                            <div>
+                              <p className={`text-sm font-bold text-stone-800 ${task.isCompleted ? "line-through text-stone-400" : ""}`}>
+                                {task.title}
+                              </p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-[10px] bg-stone-100 text-stone-500 font-semibold px-2 py-0.5 rounded-md">
+                                  {task.category}
+                                </span>
+                                <span className="text-[10px] text-stone-400 font-medium">
+                                  🕒 {task.scheduledDate}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="bg-white rounded-2xl p-6 border border-stone-200/60 text-center text-stone-400 text-xs">
+                        Belum ada jadwal tugas perawatan terencana.
+                      </div>
+                    )}
+                  </div>
+                </section>
+              );
+            })()}
+
+            {/* Section 2: Buku Catatan Lapangan & Temuan Kejadian */}
+            {(() => {
+              const observationTasks = tasks.filter(t => ["Hama", "Penyakit", "Pengairan", "Lainnya"].includes(t.category));
+              return (
+                <section className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between px-1">
+                    <h4 className="font-bold text-stone-700 text-sm">Catatan Temuan Lapangan & Kejadian</h4>
+                    <span className="text-[10px] font-bold text-stone-500 bg-stone-100 px-2.5 py-1 rounded-md">
+                      {observationTasks.length} Laporan
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
+                    {observationTasks.length > 0 ? (
+                      observationTasks.map(task => {
+                        const isCompleted = task.isCompleted;
+                        
+                        // Styling and alarms based on category
+                        let cardStyles = "border-stone-200 bg-white";
+                        let badgeStyles = "bg-stone-100 text-stone-700";
+                        let emoji = "📝";
+
+                        if (task.category === "Hama") {
+                          cardStyles = isCompleted ? "border-emerald-200 bg-emerald-50/10" : "border-rose-300 bg-rose-50/10";
+                          badgeStyles = "bg-rose-100 text-rose-700 font-bold border border-rose-200";
+                          emoji = "🐛";
+                        } else if (task.category === "Penyakit") {
+                          cardStyles = isCompleted ? "border-emerald-200 bg-emerald-50/10" : "border-amber-300 bg-amber-50/10";
+                          badgeStyles = "bg-amber-100 text-amber-800 font-bold border border-amber-200";
+                          emoji = "🦠";
+                        } else if (task.category === "Pengairan") {
+                          cardStyles = isCompleted ? "border-emerald-200 bg-emerald-50/10" : "border-sky-300 bg-sky-50/10";
+                          badgeStyles = "bg-sky-100 text-sky-700 font-bold border border-sky-200";
+                          emoji = "💧";
+                        } else {
+                          cardStyles = isCompleted ? "border-emerald-200 bg-emerald-50/10" : "border-stone-200 bg-white";
+                          badgeStyles = "bg-stone-100 text-stone-600 border border-stone-200";
+                          emoji = "📝";
+                        }
+
+                        return (
+                          <div 
+                            key={task.id}
+                            className={`bg-white rounded-2xl p-4 shadow-sm border transition-all duration-200 flex flex-col gap-2.5 ${cardStyles}`}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div className="flex gap-3">
+                                <div 
+                                  onClick={() => toggleTask(task.id!, task.isCompleted)}
+                                  className={`h-6 w-6 rounded-full border-2 flex items-center justify-center transition-all cursor-pointer shrink-0 mt-0.5 ${
+                                    isCompleted ? "border-emerald-600 bg-emerald-600 text-white" : "border-stone-300 bg-white hover:border-stone-400"
+                                  }`}
+                                >
+                                  {isCompleted && (
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                    </svg>
+                                  )}
+                                </div>
+                                <div>
+                                  <p className={`text-sm font-bold text-stone-800 ${isCompleted ? "line-through text-stone-400" : ""}`}>
+                                    {task.title}
+                                  </p>
+                                  <div className="flex items-center gap-2 mt-1.5">
+                                    <span className={`text-[9px] uppercase px-2 py-0.5 rounded-md font-extrabold tracking-wider ${badgeStyles}`}>
+                                      {emoji} {task.category}
+                                    </span>
+                                    <span className="text-[10px] text-stone-400 font-medium">
+                                      🕒 {task.scheduledDate}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Sync Alert Indicators */}
+                              {task.syncStatus === "pending" && (
+                                <span className="bg-amber-50 text-amber-700 text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border border-amber-100/50">
+                                  Offline-Saved
+                                </span>
+                              )}
+                            </div>
+
+                            {task.notes && (
+                              <div className="bg-stone-50/50 rounded-xl p-3 border border-stone-100 text-xs text-stone-600 leading-relaxed font-medium">
+                                {task.notes}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="bg-white rounded-2xl p-6 border border-stone-200/60 text-center text-stone-400 text-xs">
+                        Belum ada catatan insiden lapangan atau observasi manual. Klik "+ Catatan Lapangan" untuk mencatat temuan hari ini.
+                      </div>
+                    )}
+                  </div>
+                </section>
+              );
+            })()}
 
             {/* Info Offline */}
             <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 text-xs text-emerald-800 flex gap-2.5 items-start">
@@ -755,6 +907,99 @@ export default function Home() {
                   className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-xl text-xs transition-colors shadow-md"
                 >
                   Simpan Proyek
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MANUAL LOG CREATION MODAL OVERLAY ==================== */}
+      {showAddManualLog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-sm flex flex-col gap-4 shadow-xl border border-stone-100">
+            <div>
+              <h3 className="text-lg font-bold text-stone-800">Tambah Catatan Lapangan 📝</h3>
+              <p className="text-xs text-stone-500 mt-0.5">Dokumentasikan temuan atau buat tugas perawatan manual</p>
+            </div>
+
+            <form onSubmit={handleCreateManualLog} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs text-stone-500 font-bold">Catatan / Kegiatan</label>
+                <input 
+                  type="text"
+                  placeholder="Contoh: Ditemukan Kutu Kebul"
+                  value={manualLogTitle}
+                  onChange={(e) => setManualLogTitle(e.target.value)}
+                  className="bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-sm focus:outline-emerald-600 focus:bg-white"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs text-stone-500 font-bold">Kategori</label>
+                  <select
+                    value={manualLogCategory}
+                    onChange={(e) => setManualLogCategory(e.target.value)}
+                    className="bg-stone-50 border border-stone-200 rounded-xl px-3 py-3 text-sm focus:outline-emerald-600 focus:bg-white"
+                  >
+                    <option value="Hama">🐛 Hama</option>
+                    <option value="Penyakit">🦠 Penyakit</option>
+                    <option value="Pengairan">💧 Pengairan</option>
+                    <option value="Lainnya">📝 Lainnya</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs text-stone-500 font-bold">Tanggal Catatan</label>
+                  <input 
+                    type="date"
+                    value={manualLogDate}
+                    onChange={(e) => setManualLogDate(e.target.value)}
+                    className="bg-stone-50 border border-stone-200 rounded-xl px-3 py-2.5 text-sm focus:outline-emerald-600 focus:bg-white"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs text-stone-500 font-bold">Keterangan Tambahan (Opsional)</label>
+                <textarea 
+                  placeholder="Tulis deskripsi detail temuan di sini..."
+                  value={manualLogNotes}
+                  onChange={(e) => setManualLogNotes(e.target.value)}
+                  rows={3}
+                  className="bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 text-sm focus:outline-emerald-600 focus:bg-white resize-none"
+                />
+              </div>
+
+              <div className="flex items-center gap-3 bg-stone-50 p-3 rounded-xl border border-stone-200/50">
+                <input
+                  type="checkbox"
+                  id="manualLogIsCompleted"
+                  checked={manualLogIsCompleted}
+                  onChange={(e) => setManualLogIsCompleted(e.target.checked)}
+                  className="h-4 w-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
+                />
+                <label htmlFor="manualLogIsCompleted" className="text-xs text-stone-600 font-semibold select-none cursor-pointer">
+                  Tandai selesai dicatat / diselesaikan
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button 
+                  type="button"
+                  onClick={() => setShowAddManualLog(false)}
+                  className="bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold py-3 rounded-xl text-xs transition-colors"
+                >
+                  Batal
+                </button>
+                <button 
+                  type="submit"
+                  className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-xl text-xs transition-colors shadow-md"
+                >
+                  Simpan Catatan
                 </button>
               </div>
             </form>
