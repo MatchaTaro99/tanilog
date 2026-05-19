@@ -34,12 +34,19 @@ export default function Home() {
   const [farmerName, setFarmerName] = useState("Pak Tani");
   const [farmName, setFarmName] = useState("Sawah Makmur");
 
-  // Form State for new transaction
+  // Form State for new transaction (Pengeluaran)
   const [newDesc, setNewDesc] = useState("");
   const [newAmount, setNewAmount] = useState("");
   const [newType, setNewType] = useState<"expense" | "income">("expense");
-  const [newCat, setNewCat] = useState("Lainnya");
+  const [newCat, setNewCat] = useState("Benih");
   const [newTxProjectId, setNewTxProjectId] = useState<string>("");
+
+  // Form State for Panen income (Berat Panen × Harga Jual)
+  const [showPanenForm, setShowPanenForm] = useState(false);
+  const [panenBerat, setPanenBerat] = useState("");
+  const [panenHarga, setPanenHarga] = useState("");
+  const [panenKet, setPanenKet] = useState("Penjualan Hasil Panen");
+  const [panenProjectId, setPanenProjectId] = useState<string>("");
 
   // Network Status Monitor
   useEffect(() => {
@@ -268,6 +275,34 @@ export default function Home() {
 
     setNewDesc("");
     setNewAmount("");
+    setNewCat("Benih");
+  };
+
+  // Add Panen income: Berat Panen × Harga Jual
+  const addPanenIncome = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const projIdNum = parseInt(panenProjectId);
+    const berat = parseFloat(panenBerat);
+    const harga = parseFloat(panenHarga);
+    if (isNaN(projIdNum) || isNaN(berat) || isNaN(harga) || berat <= 0 || harga <= 0) return;
+
+    const totalPanen = berat * harga;
+    await db.finances.add({
+      projectId: projIdNum,
+      type: "income",
+      category: "Panen",
+      amount: totalPanen,
+      notes: `${panenKet} (${berat} kg × Rp ${harga.toLocaleString("id-ID")}/kg)`,
+      transactionDate: new Date().toISOString().split("T")[0],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      syncStatus: "pending",
+    });
+
+    setPanenBerat("");
+    setPanenHarga("");
+    setPanenKet("Penjualan Hasil Panen");
+    setShowPanenForm(false);
   };
 
   // Synchronize database to the remote backend
@@ -345,6 +380,27 @@ export default function Home() {
   const projectExpenses = finances.filter(t => t.type === "expense").reduce((acc, t) => acc + t.amount, 0);
   const projectIncomes = finances.filter(t => t.type === "income").reduce((acc, t) => acc + t.amount, 0);
   const projectNetProfit = projectIncomes - projectExpenses;
+
+  // === Real-time BEP Calculations (per proyek aktif) ===
+  // Total modal = semua pengeluaran
+  const totalModal = projectExpenses;
+  // Total berat panen: ekstrak dari notes pola "X kg × ..."
+  const totalBeratPanen = finances
+    .filter(t => t.type === "income" && t.category === "Panen")
+    .reduce((acc, t) => {
+      const match = t.notes?.match(/(\d+(?:\.\d+)?)\s*kg/);
+      return acc + (match ? parseFloat(match[1]) : 0);
+    }, 0);
+  // HPP/kg = Total Modal ÷ Total Berat Panen
+  const hppPerKg = totalBeratPanen > 0 ? totalModal / totalBeratPanen : 0;
+  // Harga jual rata-rata: estimasi dari income ÷ berat
+  const hargaJualRata = totalBeratPanen > 0 ? projectIncomes / totalBeratPanen : 0;
+  // Titik BEP (kg) = Total Modal ÷ Harga Jual Rata-rata
+  const titikBEP = hargaJualRata > 0 ? totalModal / hargaJualRata : 0;
+  // Keuntungan Bersih = Total Pendapatan - Total Modal
+  const keuntunganBersih = projectIncomes - totalModal;
+  // Status BEP
+  const isBEPAman = keuntunganBersih >= 0;
 
   // Task calculation metrics
   const completedTasksCount = tasks.filter(t => t.isCompleted).length;
@@ -797,63 +853,173 @@ export default function Home() {
         {/* ==================== TAB 3: FINANCE (KEUANGAN) ==================== */}
         {activeTab === "finance" && (
           <div className="flex flex-col gap-6">
-            
-            {/* Interactive Calculator BEP */}
-            <section className="bg-gradient-to-br from-emerald-800 to-teal-900 text-white rounded-3xl p-5 shadow-lg flex flex-col gap-4">
-              <h3 className="font-bold text-emerald-100 text-sm tracking-wider uppercase">BEP Lahan Aktif</h3>
-              
-              <div className="grid grid-cols-2 gap-4 border-b border-emerald-700/60 pb-4">
-                <div>
-                  <span className="text-xs text-emerald-300">Modal Terpakai</span>
-                  <p className="text-lg font-extrabold mt-0.5">Rp {projectExpenses.toLocaleString("id-ID")}</p>
-                </div>
-                <div>
-                  <span className="text-xs text-emerald-300">Hasil Penjualan</span>
-                  <p className="text-lg font-extrabold mt-0.5">Rp {projectIncomes.toLocaleString("id-ID")}</p>
-                </div>
-              </div>
 
-              <div className="flex justify-between items-center pt-1">
-                <div>
-                  <span className="text-xs text-emerald-300">Saldo Net Profit (Lahan)</span>
-                  <p className="text-xl font-black mt-0.5">Rp {projectNetProfit.toLocaleString("id-ID")}</p>
-                </div>
-                <span className={`px-3 py-1 rounded-full text-xs font-bold shadow-inner ${
-                  projectNetProfit >= 0 ? "bg-emerald-500/30 text-emerald-200" : "bg-rose-500/30 text-rose-200"
+            {/* === RINGKASAN BEP REAL-TIME === */}
+            <section className="bg-gradient-to-br from-emerald-900 to-teal-900 text-white rounded-3xl p-5 shadow-lg flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-emerald-100 text-sm tracking-wider uppercase">Kalkulator BEP Lahan</h3>
+                <span className={`px-3 py-1 rounded-full text-[10px] font-black shadow-inner ${
+                  isBEPAman ? "bg-emerald-400/30 text-emerald-200" : "bg-rose-400/30 text-rose-200"
                 }`}>
-                  {projectNetProfit >= 0 ? "BEP Aman" : "Proses BEP"}
+                  {isBEPAman ? "✅ BEP Tercapai" : "⏳ Belum BEP"}
                 </span>
               </div>
+
+              {/* 4-Metric Grid */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white/10 rounded-2xl p-3 flex flex-col gap-1">
+                  <span className="text-[10px] text-emerald-300 font-bold uppercase tracking-wide">💰 Total Modal</span>
+                  <p className="text-base font-extrabold">Rp {totalModal.toLocaleString("id-ID")}</p>
+                  <span className="text-[9px] text-emerald-400">Semua pengeluaran lahan</span>
+                </div>
+                <div className="bg-white/10 rounded-2xl p-3 flex flex-col gap-1">
+                  <span className="text-[10px] text-emerald-300 font-bold uppercase tracking-wide">⚖️ HPP / kg</span>
+                  <p className="text-base font-extrabold">
+                    {hppPerKg > 0 ? `Rp ${Math.round(hppPerKg).toLocaleString("id-ID")}` : "—"}
+                  </p>
+                  <span className="text-[9px] text-emerald-400">Harga Pokok Produksi</span>
+                </div>
+                <div className="bg-white/10 rounded-2xl p-3 flex flex-col gap-1">
+                  <span className="text-[10px] text-emerald-300 font-bold uppercase tracking-wide">📦 Titik BEP</span>
+                  <p className="text-base font-extrabold">
+                    {titikBEP > 0 ? `${Math.ceil(titikBEP).toLocaleString("id-ID")} kg` : "—"}
+                  </p>
+                  <span className="text-[9px] text-emerald-400">Min. panen untuk balik modal</span>
+                </div>
+                <div className={`rounded-2xl p-3 flex flex-col gap-1 ${
+                  isBEPAman ? "bg-emerald-500/30" : "bg-rose-500/20"
+                }`}>
+                  <span className="text-[10px] text-emerald-300 font-bold uppercase tracking-wide">📈 Keuntungan</span>
+                  <p className={`text-base font-extrabold ${isBEPAman ? "text-emerald-200" : "text-rose-300"}`}>
+                    {keuntunganBersih >= 0 ? "+" : ""}Rp {keuntunganBersih.toLocaleString("id-ID")}
+                  </p>
+                  <span className="text-[9px] text-emerald-400">Pendapatan - Modal</span>
+                </div>
+              </div>
+
+              {/* Panen progress bar */}
+              {titikBEP > 0 && (
+                <div>
+                  <div className="flex justify-between text-[10px] text-emerald-300 mb-1.5">
+                    <span>Progres Panen vs BEP</span>
+                    <span>{Math.min(100, Math.round((totalBeratPanen / titikBEP) * 100))}%</span>
+                  </div>
+                  <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-400 rounded-full transition-all duration-700"
+                      style={{ width: `${Math.min(100, (totalBeratPanen / titikBEP) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-emerald-400 mt-1">
+                    Sudah panen {totalBeratPanen.toLocaleString("id-ID")} kg dari target BEP {Math.ceil(titikBEP).toLocaleString("id-ID")} kg
+                  </p>
+                </div>
+              )}
             </section>
 
-            {/* Quick Add Transaction Form */}
-            <section className="bg-white rounded-2xl p-5 shadow-sm border border-stone-200/60">
-              <h4 className="font-bold text-stone-800 text-base mb-4">Catat Keuangan Cepat</h4>
-              <form onSubmit={addTransaction} className="flex flex-col gap-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <button 
-                    type="button"
-                    onClick={() => setNewType("expense")}
-                    className={`py-2 px-4 rounded-xl text-xs font-bold border transition-all ${
-                      newType === "expense" 
-                        ? "bg-rose-50 border-rose-300 text-rose-700" 
-                        : "bg-white border-stone-200 text-stone-500 hover:bg-stone-50"
-                    }`}
-                  >
-                    💸 Pengeluaran
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => setNewType("income")}
-                    className={`py-2 px-4 rounded-xl text-xs font-bold border transition-all ${
-                      newType === "income" 
-                        ? "bg-emerald-50 border-emerald-300 text-emerald-700" 
-                        : "bg-white border-stone-200 text-stone-500 hover:bg-stone-50"
-                    }`}
-                  >
-                    💰 Pemasukan
-                  </button>
+            {/* === FORM CATAT PANEN (Berat × Harga Jual) === */}
+            <section className="bg-white rounded-2xl shadow-sm border border-stone-200/60 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowPanenForm(v => !v)}
+                className="w-full flex items-center justify-between px-5 py-4 text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">🌾</span>
+                  <span className="font-bold text-stone-800 text-sm">Catat Hasil Panen</span>
+                  <span className="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-2 py-0.5 rounded-full">Berat × Harga</span>
                 </div>
+                <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 text-stone-400 transition-transform ${showPanenForm ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
+              {showPanenForm && (
+                <form onSubmit={addPanenIncome} className="px-5 pb-5 flex flex-col gap-3 border-t border-stone-100">
+                  <p className="text-xs text-stone-400 pt-3">Masukkan total berat hasil panen dan harga jual per kg. Sistem menghitung otomatis total pendapatan.</p>
+
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-stone-400 font-bold">Pilih Lahan Proyek</label>
+                    <select
+                      value={panenProjectId}
+                      onChange={(e) => setPanenProjectId(e.target.value)}
+                      className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-sm focus:outline-emerald-600"
+                      required
+                    >
+                      <option value="">-- Pilih Proyek --</option>
+                      {projects.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-stone-400 font-bold">Total Berat Panen (kg)</label>
+                      <input
+                        type="number"
+                        placeholder="Contoh: 150"
+                        value={panenBerat}
+                        onChange={(e) => setPanenBerat(e.target.value)}
+                        min="0.1" step="0.1"
+                        className="bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-sm focus:outline-emerald-600"
+                        required
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-stone-400 font-bold">Harga Jual (Rp/kg)</label>
+                      <input
+                        type="number"
+                        placeholder="Contoh: 8000"
+                        value={panenHarga}
+                        onChange={(e) => setPanenHarga(e.target.value)}
+                        min="1"
+                        className="bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-sm focus:outline-emerald-600"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  {/* Live Preview Total */}
+                  {panenBerat && panenHarga && parseFloat(panenBerat) > 0 && parseFloat(panenHarga) > 0 && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 flex items-center justify-between">
+                      <span className="text-xs text-emerald-700 font-medium">
+                        {parseFloat(panenBerat).toLocaleString("id-ID")} kg × Rp {parseFloat(panenHarga).toLocaleString("id-ID")}
+                      </span>
+                      <span className="text-sm font-black text-emerald-800">
+                        = Rp {(parseFloat(panenBerat) * parseFloat(panenHarga)).toLocaleString("id-ID")}
+                      </span>
+                    </div>
+                  )}
+
+                  <input
+                    type="text"
+                    placeholder="Keterangan (opsional)"
+                    value={panenKet}
+                    onChange={(e) => setPanenKet(e.target.value)}
+                    className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-sm focus:outline-emerald-600"
+                  />
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <button type="button" onClick={() => setShowPanenForm(false)}
+                      className="py-3 rounded-xl text-sm font-bold border border-stone-200 text-stone-600 hover:bg-stone-50">
+                      Batal
+                    </button>
+                    <button type="submit"
+                      className="py-3 rounded-xl text-sm font-bold bg-emerald-700 hover:bg-emerald-800 text-white transition-all">
+                      Simpan Panen
+                    </button>
+                  </div>
+                </form>
+              )}
+            </section>
+
+            {/* === FORM CATAT PENGELUARAN === */}
+            <section className="bg-white rounded-2xl p-5 shadow-sm border border-stone-200/60">
+              <h4 className="font-bold text-stone-800 text-sm mb-4 flex items-center gap-2">
+                <span>💸</span> Catat Pengeluaran
+              </h4>
+              <form onSubmit={addTransaction} className="flex flex-col gap-3">
 
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] text-stone-400 font-bold">Pilih Sektor Lahan</label>
@@ -862,48 +1028,58 @@ export default function Home() {
                     onChange={(e) => setNewTxProjectId(e.target.value)}
                     className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-sm focus:outline-emerald-600 focus:bg-white"
                   >
+                    <option value="">-- Pilih Proyek --</option>
                     {projects.map(p => (
                       <option key={p.id} value={p.id}>{p.name}</option>
                     ))}
                   </select>
                 </div>
 
-                <input 
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-stone-400 font-bold">Kategori</label>
+                    <select
+                      value={newCat}
+                      onChange={(e) => setNewCat(e.target.value)}
+                      className="bg-stone-50 border border-stone-200 rounded-xl px-3 py-3 text-sm focus:outline-emerald-600 focus:bg-white"
+                    >
+                      <option value="Benih">🌱 Benih/Bibit</option>
+                      <option value="Pupuk">🧪 Pupuk</option>
+                      <option value="Obat">💊 Obat/Pestisida</option>
+                      <option value="Tenaga Kerja">👷 Tenaga Kerja</option>
+                      <option value="Alat">🔧 Alat & Mesin</option>
+                      <option value="Irigasi">💧 Irigasi/Air</option>
+                      <option value="Lainnya">📦 Lainnya</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-stone-400 font-bold">Jumlah (Rp)</label>
+                    <input
+                      type="number"
+                      placeholder="Nominal"
+                      value={newAmount}
+                      onChange={(e) => setNewAmount(e.target.value)}
+                      className="bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-sm focus:outline-emerald-600 focus:bg-white"
+                      required
+                      min="1"
+                    />
+                  </div>
+                </div>
+
+                <input
                   type="text"
-                  placeholder="Keterangan (misal: Beli Urea)"
+                  placeholder="Keterangan (misal: Beli Urea 50kg)"
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
                   className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-sm focus:outline-emerald-600 focus:bg-white"
                   required
                 />
 
-                <div className="grid grid-cols-2 gap-3">
-                  <input 
-                    type="number"
-                    placeholder="Jumlah Rp"
-                    value={newAmount}
-                    onChange={(e) => setNewAmount(e.target.value)}
-                    className="bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-sm focus:outline-emerald-600 focus:bg-white"
-                    required
-                  />
-                  <select
-                    value={newCat}
-                    onChange={(e) => setNewCat(e.target.value)}
-                    className="bg-stone-50 border border-stone-200 rounded-xl px-3 py-3 text-sm focus:outline-emerald-600 focus:bg-white"
-                  >
-                    <option value="Pupuk">Pupuk</option>
-                    <option value="Bibit">Benih/Bibit</option>
-                    <option value="Tenaga Kerja">Tenaga Kerja</option>
-                    <option value="Panen">Penjualan Panen</option>
-                    <option value="Lainnya">Lainnya</option>
-                  </select>
-                </div>
-
-                <button 
+                <button
                   type="submit"
-                  className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 px-4 rounded-xl text-sm transition-all active:scale-98"
+                  className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold py-3 px-4 rounded-xl text-sm transition-all active:scale-98"
                 >
-                  Tambah Catatan
+                  Tambah Pengeluaran
                 </button>
               </form>
             </section>
