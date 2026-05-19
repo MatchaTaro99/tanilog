@@ -25,6 +25,11 @@ export default function Home() {
   // Selected project filter for logging and finances
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
 
+  // Delete confirmation state
+  const [confirmDeleteProjectId, setConfirmDeleteProjectId] = useState<number | null>(null);
+  const [confirmDeleteTxId, setConfirmDeleteTxId] = useState<number | null>(null);
+  const [confirmDeleteLogId, setConfirmDeleteLogId] = useState<number | null>(null);
+
   // User Profile state (backed by localStorage)
   const [farmerName, setFarmerName] = useState("Pak Tani");
   const [farmName, setFarmName] = useState("Sawah Makmur");
@@ -105,6 +110,33 @@ export default function Home() {
       updatedAt: new Date(),
       syncStatus: "pending",
     });
+  };
+
+  // Delete project (cascade: removes all logbooks & finances too)
+  const deleteProject = async (projId: number) => {
+    await db.transaction("rw", [db.projects, db.logbooks, db.finances], async () => {
+      await db.logbooks.where("projectId").equals(projId).delete();
+      await db.finances.where("projectId").equals(projId).delete();
+      await db.projects.delete(projId);
+    });
+    // If the deleted project was selected, reset to null or first remaining
+    if (selectedProjectId === projId) {
+      const remaining = await db.projects.toArray();
+      setSelectedProjectId(remaining.length > 0 ? (remaining[0].id ?? null) : null);
+    }
+    setConfirmDeleteProjectId(null);
+  };
+
+  // Delete individual finance transaction
+  const deleteTransaction = async (txId: number) => {
+    await db.finances.delete(txId);
+    setConfirmDeleteTxId(null);
+  };
+
+  // Delete individual logbook entry
+  const deleteLogEntry = async (logId: number) => {
+    await db.logbooks.delete(logId);
+    setConfirmDeleteLogId(null);
   };
 
   // Add Project + Auto Scheduled Tasks
@@ -447,16 +479,18 @@ export default function Home() {
                   return (
                     <div
                       key={p.id}
-                      onClick={() => setSelectedProjectId(p.id || null)}
-                      className={`bg-white rounded-2xl p-4 shadow-sm border transition-all cursor-pointer flex flex-col gap-3 hover:border-emerald-300 ${
+                      className={`bg-white rounded-2xl p-4 shadow-sm border transition-all flex flex-col gap-3 ${
                         isActive 
                           ? "border-emerald-600 ring-2 ring-emerald-500/20 shadow-md" 
                           : "border-stone-200/60"
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="h-10 w-10 bg-emerald-50 rounded-xl flex items-center justify-center text-lg shadow-inner">
+                        <div
+                          className="flex items-center gap-3 flex-1 cursor-pointer"
+                          onClick={() => setSelectedProjectId(p.id || null)}
+                        >
+                          <div className="h-10 w-10 bg-emerald-50 rounded-xl flex items-center justify-center text-lg shadow-inner shrink-0">
                             {plantIcon}
                           </div>
                           <div>
@@ -466,13 +500,42 @@ export default function Home() {
                             </p>
                           </div>
                         </div>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                          isActive 
-                            ? "bg-emerald-100 text-emerald-800" 
-                            : "bg-stone-100 text-stone-500"
-                        }`}>
-                          {isActive ? "Aktif Dipilih" : "Klik untuk Pilih"}
-                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            isActive 
+                              ? "bg-emerald-100 text-emerald-800" 
+                              : "bg-stone-100 text-stone-500"
+                          }`}>
+                            {isActive ? "Aktif" : "Pilih"}
+                          </span>
+                          {/* Delete project button */}
+                          {confirmDeleteProjectId === p.id ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); deleteProject(p.id!); }}
+                                className="text-[10px] bg-rose-600 text-white font-bold px-2 py-1 rounded-lg hover:bg-rose-700 transition-colors"
+                              >
+                                Hapus!
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setConfirmDeleteProjectId(null); }}
+                                className="text-[10px] bg-stone-200 text-stone-600 font-bold px-2 py-1 rounded-lg hover:bg-stone-300 transition-colors"
+                              >
+                                Batal
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setConfirmDeleteProjectId(p.id!); }}
+                              className="h-7 w-7 flex items-center justify-center rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-500 transition-colors"
+                              title="Hapus proyek ini"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       <div>
@@ -668,12 +731,39 @@ export default function Home() {
                                 </div>
                               </div>
 
-                              {/* Sync Alert Indicators */}
-                              {task.syncStatus === "pending" && (
-                                <span className="bg-amber-50 text-amber-700 text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border border-amber-100/50">
-                                  Offline-Saved
-                                </span>
-                              )}
+                              {/* Sync indicator + Delete button */}
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {task.syncStatus === "pending" && (
+                                  <span className="bg-amber-50 text-amber-700 text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border border-amber-100/50">
+                                    Offline
+                                  </span>
+                                )}
+                                {confirmDeleteLogId === task.id ? (
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => deleteLogEntry(task.id!)}
+                                      className="text-[10px] bg-rose-600 text-white font-bold px-2 py-0.5 rounded-lg hover:bg-rose-700"
+                                    >
+                                      Hapus
+                                    </button>
+                                    <button
+                                      onClick={() => setConfirmDeleteLogId(null)}
+                                      className="text-[10px] bg-stone-200 text-stone-600 font-bold px-2 py-0.5 rounded-lg hover:bg-stone-300"
+                                    >
+                                      Batal
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => setConfirmDeleteLogId(task.id!)}
+                                    className="h-6 w-6 flex items-center justify-center rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-400 transition-colors"
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                  </button>
+                                )}
+                              </div>
                             </div>
 
                             {task.notes && (
@@ -824,16 +914,44 @@ export default function Home() {
               <div className="flex flex-col gap-2">
                 {finances.length > 0 ? (
                   finances.map(tx => (
-                    <div key={tx.id} className="bg-white rounded-xl p-4 shadow-sm border border-stone-100 flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-bold text-stone-800">{tx.notes || tx.category}</p>
+                    <div key={tx.id} className="bg-white rounded-xl p-4 shadow-sm border border-stone-100 flex items-center justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-stone-800 truncate">{tx.notes || tx.category}</p>
                         <span className="text-[10px] bg-stone-100 text-stone-500 font-bold px-2 py-0.5 rounded-md mt-1 inline-block">
                           {tx.category} • {tx.transactionDate}
                         </span>
                       </div>
-                      <span className={`text-sm font-black ${tx.type === "expense" ? "text-rose-600" : "text-emerald-700"}`}>
-                        {tx.type === "expense" ? "-" : "+"}Rp {tx.amount.toLocaleString("id-ID")}
-                      </span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-sm font-black ${tx.type === "expense" ? "text-rose-600" : "text-emerald-700"}`}>
+                          {tx.type === "expense" ? "-" : "+"}Rp {tx.amount.toLocaleString("id-ID")}
+                        </span>
+                        {/* Delete transaction */}
+                        {confirmDeleteTxId === tx.id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => deleteTransaction(tx.id!)}
+                              className="text-[10px] bg-rose-600 text-white font-bold px-2 py-1 rounded-lg hover:bg-rose-700"
+                            >
+                              Hapus
+                            </button>
+                            <button
+                              onClick={() => setConfirmDeleteTxId(null)}
+                              className="text-[10px] bg-stone-200 text-stone-600 font-bold px-2 py-1 rounded-lg hover:bg-stone-300"
+                            >
+                              Batal
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmDeleteTxId(tx.id!)}
+                            className="h-7 w-7 flex items-center justify-center rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-400 transition-colors"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))
                 ) : (
