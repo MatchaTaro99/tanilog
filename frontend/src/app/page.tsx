@@ -14,8 +14,21 @@ export default function Home() {
   const [newProjType, setNewProjType] = useState("Padi");
   const [newProjDate, setNewProjDate] = useState(() => new Date().toISOString().split("T")[0]);
 
+  // Manual Logbook Creation Modal state
+  const [showAddManualLog, setShowAddManualLog] = useState(false);
+  const [manualLogTitle, setManualLogTitle] = useState("");
+  const [manualLogCategory, setManualLogCategory] = useState("Lainnya");
+  const [manualLogDate, setManualLogDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [manualLogNotes, setManualLogNotes] = useState("");
+  const [manualLogIsCompleted, setManualLogIsCompleted] = useState(true);
+
   // Selected project filter for logging and finances
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+
+  // Delete confirmation state
+  const [confirmDeleteProjectId, setConfirmDeleteProjectId] = useState<number | null>(null);
+  const [confirmDeleteTxId, setConfirmDeleteTxId] = useState<number | null>(null);
+  const [confirmDeleteLogId, setConfirmDeleteLogId] = useState<number | null>(null);
 
   // User Profile state (backed by localStorage)
   const [farmerName, setFarmerName] = useState("Pak Tani");
@@ -97,6 +110,33 @@ export default function Home() {
       updatedAt: new Date(),
       syncStatus: "pending",
     });
+  };
+
+  // Delete project (cascade: removes all logbooks & finances too)
+  const deleteProject = async (projId: number) => {
+    await db.transaction("rw", [db.projects, db.logbooks, db.finances], async () => {
+      await db.logbooks.where("projectId").equals(projId).delete();
+      await db.finances.where("projectId").equals(projId).delete();
+      await db.projects.delete(projId);
+    });
+    // If the deleted project was selected, reset to null or first remaining
+    if (selectedProjectId === projId) {
+      const remaining = await db.projects.toArray();
+      setSelectedProjectId(remaining.length > 0 ? (remaining[0].id ?? null) : null);
+    }
+    setConfirmDeleteProjectId(null);
+  };
+
+  // Delete individual finance transaction
+  const deleteTransaction = async (txId: number) => {
+    await db.finances.delete(txId);
+    setConfirmDeleteTxId(null);
+  };
+
+  // Delete individual logbook entry
+  const deleteLogEntry = async (logId: number) => {
+    await db.logbooks.delete(logId);
+    setConfirmDeleteLogId(null);
   };
 
   // Add Project + Auto Scheduled Tasks
@@ -181,6 +221,33 @@ export default function Home() {
     setActiveTab("dashboard");
   };
 
+  // Add Manual Field Observation / Custom Log
+  const handleCreateManualLog = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualLogTitle.trim() || !selectedProjectId) return;
+
+    await db.logbooks.add({
+      projectId: selectedProjectId,
+      title: manualLogTitle,
+      category: manualLogCategory,
+      scheduledDate: manualLogDate,
+      isCompleted: manualLogIsCompleted,
+      completedDate: manualLogIsCompleted ? manualLogDate : undefined,
+      notes: manualLogNotes || undefined,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      syncStatus: "pending",
+    });
+
+    // Reset Form & Close Modal
+    setManualLogTitle("");
+    setManualLogCategory("Lainnya");
+    setManualLogDate(new Date().toISOString().split("T")[0]);
+    setManualLogNotes("");
+    setManualLogIsCompleted(true);
+    setShowAddManualLog(false);
+  };
+
   // Add transaction mutation on Dexie
   const addTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -201,6 +268,72 @@ export default function Home() {
 
     setNewDesc("");
     setNewAmount("");
+  };
+
+  // Synchronize database to the remote backend
+  const handleSyncDatabase = async () => {
+    try {
+      // 1. Fetch all local projects, logbooks, and finances that are "pending" sync
+      const pendingProjects = await db.projects.filter(p => p.syncStatus === "pending").toArray();
+      const pendingLogbooks = await db.logbooks.filter(l => l.syncStatus === "pending").toArray();
+      const pendingFinances = await db.finances.filter(f => f.syncStatus === "pending").toArray();
+
+      const totalPending = pendingProjects.length + pendingLogbooks.length + pendingFinances.length;
+
+      if (totalPending === 0) {
+        alert("Semua data Anda sudah tersinkronisasi sepenuhnya dengan server MySQL!");
+        return;
+      }
+
+      // 2. Send the pending data in a batch to the backend
+      const response = await fetch("http://localhost:3000/api/sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          projects: pendingProjects,
+          logbooks: pendingLogbooks,
+          finances: pendingFinances,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.status === "success") {
+        // 3. Mark all successfully synchronized records as "synced" in a single transaction
+        await db.transaction("rw", [db.projects, db.logbooks, db.finances], async () => {
+          for (const proj of pendingProjects) {
+            if (proj.id) {
+              await db.projects.update(proj.id, { syncStatus: "synced", updatedAt: new Date() });
+            }
+          }
+          for (const log of pendingLogbooks) {
+            if (log.id) {
+              await db.logbooks.update(log.id, { syncStatus: "synced", updatedAt: new Date() });
+            }
+          }
+          for (const fin of pendingFinances) {
+            if (fin.id) {
+              await db.finances.update(fin.id, { syncStatus: "synced", updatedAt: new Date() });
+            }
+          }
+        });
+
+        alert(
+          `Sinkronisasi Berhasil!\n\n` +
+          `• Proyek Lahan: ${result.syncedCount.projects} baris\n` +
+          `• Catatan/Logbook: ${result.syncedCount.logbooks} baris\n` +
+          `• Keuangan/Ledger: ${result.syncedCount.finances} baris\n\n` +
+          `Semua data luring berhasil diunggah ke server MySQL.`
+        );
+      } else {
+        alert(`Gagal Sinkronisasi: ${result.message || "Kesalahan tidak diketahui pada server"}`);
+      }
+    } catch (error: any) {
+      console.error("Sync error:", error);
+      alert(`Gagal Sinkronisasi: Tidak dapat menghubungi server. Pastikan koneksi server backend aktif.`);
+    }
   };
 
   // Financial calculations (Global metrics across all projects)
@@ -346,16 +479,18 @@ export default function Home() {
                   return (
                     <div
                       key={p.id}
-                      onClick={() => setSelectedProjectId(p.id || null)}
-                      className={`bg-white rounded-2xl p-4 shadow-sm border transition-all cursor-pointer flex flex-col gap-3 hover:border-emerald-300 ${
+                      className={`bg-white rounded-2xl p-4 shadow-sm border transition-all flex flex-col gap-3 ${
                         isActive 
                           ? "border-emerald-600 ring-2 ring-emerald-500/20 shadow-md" 
                           : "border-stone-200/60"
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="h-10 w-10 bg-emerald-50 rounded-xl flex items-center justify-center text-lg shadow-inner">
+                        <div
+                          className="flex items-center gap-3 flex-1 cursor-pointer"
+                          onClick={() => setSelectedProjectId(p.id || null)}
+                        >
+                          <div className="h-10 w-10 bg-emerald-50 rounded-xl flex items-center justify-center text-lg shadow-inner shrink-0">
                             {plantIcon}
                           </div>
                           <div>
@@ -365,13 +500,42 @@ export default function Home() {
                             </p>
                           </div>
                         </div>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                          isActive 
-                            ? "bg-emerald-100 text-emerald-800" 
-                            : "bg-stone-100 text-stone-500"
-                        }`}>
-                          {isActive ? "Aktif Dipilih" : "Klik untuk Pilih"}
-                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            isActive 
+                              ? "bg-emerald-100 text-emerald-800" 
+                              : "bg-stone-100 text-stone-500"
+                          }`}>
+                            {isActive ? "Aktif" : "Pilih"}
+                          </span>
+                          {/* Delete project button */}
+                          {confirmDeleteProjectId === p.id ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); deleteProject(p.id!); }}
+                                className="text-[10px] bg-rose-600 text-white font-bold px-2 py-1 rounded-lg hover:bg-rose-700 transition-colors"
+                              >
+                                Hapus!
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setConfirmDeleteProjectId(null); }}
+                                className="text-[10px] bg-stone-200 text-stone-600 font-bold px-2 py-1 rounded-lg hover:bg-stone-300 transition-colors"
+                              >
+                                Batal
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setConfirmDeleteProjectId(p.id!); }}
+                              className="h-7 w-7 flex items-center justify-center rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-500 transition-colors"
+                              title="Hapus proyek ini"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       <div>
@@ -420,61 +584,205 @@ export default function Home() {
 
         {/* ==================== TAB 2: LOGBOOK ==================== */}
         {activeTab === "logbook" && (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-5">
             <div className="flex items-center justify-between px-1">
               <div>
                 <h3 className="text-lg font-bold text-stone-800">Catatan Harian Lapangan</h3>
-                <p className="text-xs text-stone-500">Centang kegiatan setelah selesai dilakukan di sawah</p>
+                <p className="text-xs text-stone-500">Pantau dan catat perkembangan tanaman Anda</p>
               </div>
-              <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100">
-                {completedTasksCount}/{tasks.length} Selesai
-              </span>
+              <button 
+                onClick={() => setShowAddManualLog(true)}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs shadow-sm transition-all flex items-center gap-1.5 active:scale-95 shrink-0"
+              >
+                <span>➕ Catatan Lapangan</span>
+              </button>
             </div>
 
-            {/* Checklist Container */}
-            <div className="flex flex-col gap-3">
-              {tasks.length > 0 ? (
-                tasks.map(task => (
-                  <div 
-                    key={task.id}
-                    onClick={() => toggleTask(task.id!, task.isCompleted)}
-                    className={`bg-white rounded-2xl p-4 shadow-sm border transition-all duration-200 cursor-pointer flex items-center justify-between select-none ${
-                      task.isCompleted ? "border-emerald-200 bg-emerald-50/20" : "border-stone-200/60 hover:border-stone-300"
-                    }`}
-                  >
-                    <div className="flex items-center gap-4">
-                      {/* Circle Checkbox */}
-                      <div className={`h-6 w-6 rounded-full border-2 flex items-center justify-center transition-all ${
-                        task.isCompleted ? "border-emerald-600 bg-emerald-600 text-white" : "border-stone-300 bg-white"
-                      }`}>
-                        {task.isCompleted && (
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
-                      </div>
-                      <div>
-                        <p className={`text-sm font-bold text-stone-800 ${task.isCompleted ? "line-through text-stone-400" : ""}`}>
-                          {task.title}
-                        </p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] bg-stone-100 text-stone-500 font-semibold px-2 py-0.5 rounded-md">
-                            {task.category}
-                          </span>
-                          <span className="text-[10px] text-stone-400 font-medium">
-                            🕒 {task.scheduledDate}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+            {/* Section 1: Jadwal Perawatan Terencana */}
+            {(() => {
+              const scheduledTasks = tasks.filter(t => ["Penyiraman", "Pemupukan", "Panen", "Proteksi"].includes(t.category));
+              return (
+                <section className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between px-1">
+                    <h4 className="font-bold text-stone-700 text-sm">Jadwal Perawatan Terencana</h4>
+                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-100/60">
+                      {scheduledTasks.filter(t => t.isCompleted).length}/{scheduledTasks.length} Selesai
+                    </span>
                   </div>
-                ))
-              ) : (
-                <div className="bg-white rounded-2xl p-8 border border-stone-200/60 text-center text-stone-400 text-xs">
-                  Belum ada logbook/jadwal tugas untuk proyek lahan ini. Silakan buat Proyek baru untuk meng-generate jadwal otomatis.
-                </div>
-              )}
-            </div>
+
+                  <div className="flex flex-col gap-2.5">
+                    {scheduledTasks.length > 0 ? (
+                      scheduledTasks.map(task => (
+                        <div 
+                          key={task.id}
+                          onClick={() => toggleTask(task.id!, task.isCompleted)}
+                          className={`bg-white rounded-2xl p-4 shadow-sm border transition-all duration-200 cursor-pointer flex items-center justify-between select-none ${
+                            task.isCompleted ? "border-emerald-200 bg-emerald-50/20" : "border-stone-200/60 hover:border-stone-300"
+                          }`}
+                        >
+                          <div className="flex items-center gap-4">
+                            {/* Circle Checkbox */}
+                            <div className={`h-6 w-6 rounded-full border-2 flex items-center justify-center transition-all ${
+                              task.isCompleted ? "border-emerald-600 bg-emerald-600 text-white" : "border-stone-300 bg-white"
+                            }`}>
+                              {task.isCompleted && (
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                </svg>
+                              )}
+                            </div>
+                            <div>
+                              <p className={`text-sm font-bold text-stone-800 ${task.isCompleted ? "line-through text-stone-400" : ""}`}>
+                                {task.title}
+                              </p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-[10px] bg-stone-100 text-stone-500 font-semibold px-2 py-0.5 rounded-md">
+                                  {task.category}
+                                </span>
+                                <span className="text-[10px] text-stone-400 font-medium">
+                                  🕒 {task.scheduledDate}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="bg-white rounded-2xl p-6 border border-stone-200/60 text-center text-stone-400 text-xs">
+                        Belum ada jadwal tugas perawatan terencana.
+                      </div>
+                    )}
+                  </div>
+                </section>
+              );
+            })()}
+
+            {/* Section 2: Buku Catatan Lapangan & Temuan Kejadian */}
+            {(() => {
+              const observationTasks = tasks.filter(t => ["Hama", "Penyakit", "Pengairan", "Lainnya"].includes(t.category));
+              return (
+                <section className="flex flex-col gap-3">
+                  <div className="flex items-center justify-between px-1">
+                    <h4 className="font-bold text-stone-700 text-sm">Catatan Temuan Lapangan & Kejadian</h4>
+                    <span className="text-[10px] font-bold text-stone-500 bg-stone-100 px-2.5 py-1 rounded-md">
+                      {observationTasks.length} Laporan
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
+                    {observationTasks.length > 0 ? (
+                      observationTasks.map(task => {
+                        const isCompleted = task.isCompleted;
+                        
+                        // Styling and alarms based on category
+                        let cardStyles = "border-stone-200 bg-white";
+                        let badgeStyles = "bg-stone-100 text-stone-700";
+                        let emoji = "📝";
+
+                        if (task.category === "Hama") {
+                          cardStyles = isCompleted ? "border-emerald-200 bg-emerald-50/10" : "border-rose-300 bg-rose-50/10";
+                          badgeStyles = "bg-rose-100 text-rose-700 font-bold border border-rose-200";
+                          emoji = "🐛";
+                        } else if (task.category === "Penyakit") {
+                          cardStyles = isCompleted ? "border-emerald-200 bg-emerald-50/10" : "border-amber-300 bg-amber-50/10";
+                          badgeStyles = "bg-amber-100 text-amber-800 font-bold border border-amber-200";
+                          emoji = "🦠";
+                        } else if (task.category === "Pengairan") {
+                          cardStyles = isCompleted ? "border-emerald-200 bg-emerald-50/10" : "border-sky-300 bg-sky-50/10";
+                          badgeStyles = "bg-sky-100 text-sky-700 font-bold border border-sky-200";
+                          emoji = "💧";
+                        } else {
+                          cardStyles = isCompleted ? "border-emerald-200 bg-emerald-50/10" : "border-stone-200 bg-white";
+                          badgeStyles = "bg-stone-100 text-stone-600 border border-stone-200";
+                          emoji = "📝";
+                        }
+
+                        return (
+                          <div 
+                            key={task.id}
+                            className={`bg-white rounded-2xl p-4 shadow-sm border transition-all duration-200 flex flex-col gap-2.5 ${cardStyles}`}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div className="flex gap-3">
+                                <div 
+                                  onClick={() => toggleTask(task.id!, task.isCompleted)}
+                                  className={`h-6 w-6 rounded-full border-2 flex items-center justify-center transition-all cursor-pointer shrink-0 mt-0.5 ${
+                                    isCompleted ? "border-emerald-600 bg-emerald-600 text-white" : "border-stone-300 bg-white hover:border-stone-400"
+                                  }`}
+                                >
+                                  {isCompleted && (
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                    </svg>
+                                  )}
+                                </div>
+                                <div>
+                                  <p className={`text-sm font-bold text-stone-800 ${isCompleted ? "line-through text-stone-400" : ""}`}>
+                                    {task.title}
+                                  </p>
+                                  <div className="flex items-center gap-2 mt-1.5">
+                                    <span className={`text-[9px] uppercase px-2 py-0.5 rounded-md font-extrabold tracking-wider ${badgeStyles}`}>
+                                      {emoji} {task.category}
+                                    </span>
+                                    <span className="text-[10px] text-stone-400 font-medium">
+                                      🕒 {task.scheduledDate}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Sync indicator + Delete button */}
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {task.syncStatus === "pending" && (
+                                  <span className="bg-amber-50 text-amber-700 text-[8px] font-black uppercase px-1.5 py-0.5 rounded-md border border-amber-100/50">
+                                    Offline
+                                  </span>
+                                )}
+                                {confirmDeleteLogId === task.id ? (
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => deleteLogEntry(task.id!)}
+                                      className="text-[10px] bg-rose-600 text-white font-bold px-2 py-0.5 rounded-lg hover:bg-rose-700"
+                                    >
+                                      Hapus
+                                    </button>
+                                    <button
+                                      onClick={() => setConfirmDeleteLogId(null)}
+                                      className="text-[10px] bg-stone-200 text-stone-600 font-bold px-2 py-0.5 rounded-lg hover:bg-stone-300"
+                                    >
+                                      Batal
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => setConfirmDeleteLogId(task.id!)}
+                                    className="h-6 w-6 flex items-center justify-center rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-400 transition-colors"
+                                  >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {task.notes && (
+                              <div className="bg-stone-50/50 rounded-xl p-3 border border-stone-100 text-xs text-stone-600 leading-relaxed font-medium">
+                                {task.notes}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="bg-white rounded-2xl p-6 border border-stone-200/60 text-center text-stone-400 text-xs">
+                        Belum ada catatan insiden lapangan atau observasi manual. Klik "+ Catatan Lapangan" untuk mencatat temuan hari ini.
+                      </div>
+                    )}
+                  </div>
+                </section>
+              );
+            })()}
 
             {/* Info Offline */}
             <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 text-xs text-emerald-800 flex gap-2.5 items-start">
@@ -606,16 +914,44 @@ export default function Home() {
               <div className="flex flex-col gap-2">
                 {finances.length > 0 ? (
                   finances.map(tx => (
-                    <div key={tx.id} className="bg-white rounded-xl p-4 shadow-sm border border-stone-100 flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-bold text-stone-800">{tx.notes || tx.category}</p>
+                    <div key={tx.id} className="bg-white rounded-xl p-4 shadow-sm border border-stone-100 flex items-center justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-stone-800 truncate">{tx.notes || tx.category}</p>
                         <span className="text-[10px] bg-stone-100 text-stone-500 font-bold px-2 py-0.5 rounded-md mt-1 inline-block">
                           {tx.category} • {tx.transactionDate}
                         </span>
                       </div>
-                      <span className={`text-sm font-black ${tx.type === "expense" ? "text-rose-600" : "text-emerald-700"}`}>
-                        {tx.type === "expense" ? "-" : "+"}Rp {tx.amount.toLocaleString("id-ID")}
-                      </span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-sm font-black ${tx.type === "expense" ? "text-rose-600" : "text-emerald-700"}`}>
+                          {tx.type === "expense" ? "-" : "+"}Rp {tx.amount.toLocaleString("id-ID")}
+                        </span>
+                        {/* Delete transaction */}
+                        {confirmDeleteTxId === tx.id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => deleteTransaction(tx.id!)}
+                              className="text-[10px] bg-rose-600 text-white font-bold px-2 py-1 rounded-lg hover:bg-rose-700"
+                            >
+                              Hapus
+                            </button>
+                            <button
+                              onClick={() => setConfirmDeleteTxId(null)}
+                              className="text-[10px] bg-stone-200 text-stone-600 font-bold px-2 py-1 rounded-lg hover:bg-stone-300"
+                            >
+                              Batal
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmDeleteTxId(tx.id!)}
+                            className="h-7 w-7 flex items-center justify-center rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-400 transition-colors"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))
                 ) : (
@@ -681,9 +1017,9 @@ export default function Home() {
               </div>
             </section>
 
-            {/* Bulk manual sync simulation */}
+            {/* Bulk manual sync trigger */}
             <button 
-              onClick={() => alert(`Simulasi sinkronisasi data luring: Berhasil meng-upload ke MySQL server!`)}
+              onClick={handleSyncDatabase}
               className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-bold py-4 px-6 rounded-2xl shadow-md transition-all active:scale-98 text-sm"
             >
               🔄 Sinkronkan Data ke Server Sekarang
@@ -755,6 +1091,99 @@ export default function Home() {
                   className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-xl text-xs transition-colors shadow-md"
                 >
                   Simpan Proyek
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MANUAL LOG CREATION MODAL OVERLAY ==================== */}
+      {showAddManualLog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-sm flex flex-col gap-4 shadow-xl border border-stone-100">
+            <div>
+              <h3 className="text-lg font-bold text-stone-800">Tambah Catatan Lapangan 📝</h3>
+              <p className="text-xs text-stone-500 mt-0.5">Dokumentasikan temuan atau buat tugas perawatan manual</p>
+            </div>
+
+            <form onSubmit={handleCreateManualLog} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs text-stone-500 font-bold">Catatan / Kegiatan</label>
+                <input 
+                  type="text"
+                  placeholder="Contoh: Ditemukan Kutu Kebul"
+                  value={manualLogTitle}
+                  onChange={(e) => setManualLogTitle(e.target.value)}
+                  className="bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 text-sm focus:outline-emerald-600 focus:bg-white"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs text-stone-500 font-bold">Kategori</label>
+                  <select
+                    value={manualLogCategory}
+                    onChange={(e) => setManualLogCategory(e.target.value)}
+                    className="bg-stone-50 border border-stone-200 rounded-xl px-3 py-3 text-sm focus:outline-emerald-600 focus:bg-white"
+                  >
+                    <option value="Hama">🐛 Hama</option>
+                    <option value="Penyakit">🦠 Penyakit</option>
+                    <option value="Pengairan">💧 Pengairan</option>
+                    <option value="Lainnya">📝 Lainnya</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs text-stone-500 font-bold">Tanggal Catatan</label>
+                  <input 
+                    type="date"
+                    value={manualLogDate}
+                    onChange={(e) => setManualLogDate(e.target.value)}
+                    className="bg-stone-50 border border-stone-200 rounded-xl px-3 py-2.5 text-sm focus:outline-emerald-600 focus:bg-white"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs text-stone-500 font-bold">Keterangan Tambahan (Opsional)</label>
+                <textarea 
+                  placeholder="Tulis deskripsi detail temuan di sini..."
+                  value={manualLogNotes}
+                  onChange={(e) => setManualLogNotes(e.target.value)}
+                  rows={3}
+                  className="bg-stone-50 border border-stone-200 rounded-xl px-4 py-2.5 text-sm focus:outline-emerald-600 focus:bg-white resize-none"
+                />
+              </div>
+
+              <div className="flex items-center gap-3 bg-stone-50 p-3 rounded-xl border border-stone-200/50">
+                <input
+                  type="checkbox"
+                  id="manualLogIsCompleted"
+                  checked={manualLogIsCompleted}
+                  onChange={(e) => setManualLogIsCompleted(e.target.checked)}
+                  className="h-4 w-4 rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
+                />
+                <label htmlFor="manualLogIsCompleted" className="text-xs text-stone-600 font-semibold select-none cursor-pointer">
+                  Tandai selesai dicatat / diselesaikan
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button 
+                  type="button"
+                  onClick={() => setShowAddManualLog(false)}
+                  className="bg-stone-100 hover:bg-stone-200 text-stone-600 font-bold py-3 rounded-xl text-xs transition-colors"
+                >
+                  Batal
+                </button>
+                <button 
+                  type="submit"
+                  className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-xl text-xs transition-colors shadow-md"
+                >
+                  Simpan Catatan
                 </button>
               </div>
             </form>
