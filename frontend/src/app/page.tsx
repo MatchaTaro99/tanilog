@@ -238,6 +238,72 @@ export default function Home() {
     setNewAmount("");
   };
 
+  // Synchronize database to the remote backend
+  const handleSyncDatabase = async () => {
+    try {
+      // 1. Fetch all local projects, logbooks, and finances that are "pending" sync
+      const pendingProjects = await db.projects.filter(p => p.syncStatus === "pending").toArray();
+      const pendingLogbooks = await db.logbooks.filter(l => l.syncStatus === "pending").toArray();
+      const pendingFinances = await db.finances.filter(f => f.syncStatus === "pending").toArray();
+
+      const totalPending = pendingProjects.length + pendingLogbooks.length + pendingFinances.length;
+
+      if (totalPending === 0) {
+        alert("Semua data Anda sudah tersinkronisasi sepenuhnya dengan server MySQL!");
+        return;
+      }
+
+      // 2. Send the pending data in a batch to the backend
+      const response = await fetch("http://localhost:3000/api/sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          projects: pendingProjects,
+          logbooks: pendingLogbooks,
+          finances: pendingFinances,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.status === "success") {
+        // 3. Mark all successfully synchronized records as "synced" in a single transaction
+        await db.transaction("rw", [db.projects, db.logbooks, db.finances], async () => {
+          for (const proj of pendingProjects) {
+            if (proj.id) {
+              await db.projects.update(proj.id, { syncStatus: "synced", updatedAt: new Date() });
+            }
+          }
+          for (const log of pendingLogbooks) {
+            if (log.id) {
+              await db.logbooks.update(log.id, { syncStatus: "synced", updatedAt: new Date() });
+            }
+          }
+          for (const fin of pendingFinances) {
+            if (fin.id) {
+              await db.finances.update(fin.id, { syncStatus: "synced", updatedAt: new Date() });
+            }
+          }
+        });
+
+        alert(
+          `Sinkronisasi Berhasil!\n\n` +
+          `• Proyek Lahan: ${result.syncedCount.projects} baris\n` +
+          `• Catatan/Logbook: ${result.syncedCount.logbooks} baris\n` +
+          `• Keuangan/Ledger: ${result.syncedCount.finances} baris\n\n` +
+          `Semua data luring berhasil diunggah ke server MySQL.`
+        );
+      } else {
+        alert(`Gagal Sinkronisasi: ${result.message || "Kesalahan tidak diketahui pada server"}`);
+      }
+    } catch (error: any) {
+      console.error("Sync error:", error);
+      alert(`Gagal Sinkronisasi: Tidak dapat menghubungi server. Pastikan koneksi server backend aktif.`);
+    }
+  };
+
   // Financial calculations (Global metrics across all projects)
   const globalExpenses = allFinances.filter(t => t.type === "expense").reduce((acc, t) => acc + t.amount, 0);
   const globalIncomes = allFinances.filter(t => t.type === "income").reduce((acc, t) => acc + t.amount, 0);
@@ -833,9 +899,9 @@ export default function Home() {
               </div>
             </section>
 
-            {/* Bulk manual sync simulation */}
+            {/* Bulk manual sync trigger */}
             <button 
-              onClick={() => alert(`Simulasi sinkronisasi data luring: Berhasil meng-upload ke MySQL server!`)}
+              onClick={handleSyncDatabase}
               className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-bold py-4 px-6 rounded-2xl shadow-md transition-all active:scale-98 text-sm"
             >
               🔄 Sinkronkan Data ke Server Sekarang
