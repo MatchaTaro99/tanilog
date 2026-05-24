@@ -67,84 +67,102 @@ const app = new Elysia()
       let syncedLogbooksCount = 0;
       let syncedFinancesCount = 0;
 
-      // 1. Sync projects (Insert or Update on conflict)
+      // 1. Sync projects
       if (localProjects && localProjects.length > 0) {
         for (const proj of localProjects) {
-          await db.insert(projects).values({
-            id: proj.id,
-            userId: proj.userId,
-            name: proj.name,
-            plantType: proj.plantType,
-            plantingDate: proj.plantingDate,
-            status: proj.status,
-            createdAt: new Date(proj.createdAt),
-            updatedAt: new Date(proj.updatedAt)
-          }).onDuplicateKeyUpdate({
-            set: {
+          const existing = await db.select().from(projects).where(eq(projects.id, proj.id)).limit(1);
+          if (existing.length > 0) {
+            if (new Date(proj.updatedAt) > existing[0].updatedAt) {
+              await db.update(projects).set({
+                name: proj.name,
+                plantType: proj.plantType,
+                plantingDate: proj.plantingDate,
+                status: proj.status,
+                updatedAt: new Date(proj.updatedAt)
+              }).where(eq(projects.id, proj.id));
+              syncedProjectsCount++;
+            }
+          } else {
+            await db.insert(projects).values({
+              id: proj.id,
+              userId: proj.userId,
               name: proj.name,
               plantType: proj.plantType,
               plantingDate: proj.plantingDate,
               status: proj.status,
+              createdAt: new Date(proj.createdAt),
               updatedAt: new Date(proj.updatedAt)
-            }
-          });
-          syncedProjectsCount++;
+            });
+            syncedProjectsCount++;
+          }
         }
       }
 
-      // 2. Sync logbooks (Insert or Update on conflict)
+      // 2. Sync logbooks
       if (localLogbooks && localLogbooks.length > 0) {
         for (const log of localLogbooks) {
-          await db.insert(logbooks).values({
-            id: log.id,
-            projectId: log.projectId,
-            title: log.title,
-            category: log.category,
-            scheduledDate: log.scheduledDate,
-            completedDate: log.completedDate || null,
-            isCompleted: log.isCompleted,
-            notes: log.notes || null,
-            createdAt: new Date(log.createdAt),
-            updatedAt: new Date(log.updatedAt)
-          }).onDuplicateKeyUpdate({
-            set: {
+          const existing = await db.select().from(logbooks).where(eq(logbooks.id, log.id)).limit(1);
+          if (existing.length > 0) {
+            if (new Date(log.updatedAt) > existing[0].updatedAt) {
+              await db.update(logbooks).set({
+                title: log.title,
+                category: log.category,
+                scheduledDate: log.scheduledDate,
+                completedDate: log.completedDate || null,
+                isCompleted: log.isCompleted,
+                notes: log.notes || null,
+                updatedAt: new Date(log.updatedAt)
+              }).where(eq(logbooks.id, log.id));
+              syncedLogbooksCount++;
+            }
+          } else {
+            await db.insert(logbooks).values({
+              id: log.id,
+              projectId: log.projectId,
               title: log.title,
               category: log.category,
               scheduledDate: log.scheduledDate,
               completedDate: log.completedDate || null,
               isCompleted: log.isCompleted,
               notes: log.notes || null,
+              createdAt: new Date(log.createdAt),
               updatedAt: new Date(log.updatedAt)
-            }
-          });
-          syncedLogbooksCount++;
+            });
+            syncedLogbooksCount++;
+          }
         }
       }
 
-      // 3. Sync finances (Insert or Update on conflict)
+      // 3. Sync finances
       if (localFinances && localFinances.length > 0) {
         for (const fin of localFinances) {
-          await db.insert(finances).values({
-            id: fin.id,
-            projectId: fin.projectId,
-            type: fin.type,
-            category: fin.category,
-            amount: fin.amount.toString(),
-            notes: fin.notes || null,
-            transactionDate: fin.transactionDate,
-            createdAt: new Date(fin.createdAt),
-            updatedAt: new Date(fin.updatedAt)
-          }).onDuplicateKeyUpdate({
-            set: {
+          const existing = await db.select().from(finances).where(eq(finances.id, fin.id)).limit(1);
+          if (existing.length > 0) {
+            if (new Date(fin.updatedAt) > existing[0].updatedAt) {
+              await db.update(finances).set({
+                type: fin.type,
+                category: fin.category,
+                amount: fin.amount.toString(),
+                notes: fin.notes || null,
+                transactionDate: fin.transactionDate,
+                updatedAt: new Date(fin.updatedAt)
+              }).where(eq(finances.id, fin.id));
+              syncedFinancesCount++;
+            }
+          } else {
+            await db.insert(finances).values({
+              id: fin.id,
+              projectId: fin.projectId,
               type: fin.type,
               category: fin.category,
               amount: fin.amount.toString(),
               notes: fin.notes || null,
               transactionDate: fin.transactionDate,
+              createdAt: new Date(fin.createdAt),
               updatedAt: new Date(fin.updatedAt)
-            }
-          });
-          syncedFinancesCount++;
+            });
+            syncedFinancesCount++;
+          }
         }
       }
 
