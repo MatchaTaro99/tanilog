@@ -51,6 +51,12 @@ export default function Home() {
   // Network Status Monitor
   useEffect(() => {
     setIsOnline(navigator.onLine);
+    
+    // Auto-sync function reference to avoid stale closures if needed, 
+    // but db is global so we can just call it. However handleSyncDatabase is defined later.
+    // To avoid circular dependencies, we'll use a local function that calls the global sync logic.
+    // Wait, handleSyncDatabase is defined in the component, so we can just use it inside a separate useEffect.
+    
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
 
@@ -306,7 +312,7 @@ export default function Home() {
   };
 
   // Synchronize database to the remote backend
-  const handleSyncDatabase = async () => {
+  const handleSyncDatabase = async (silent = false) => {
     try {
       // 1. Fetch all local projects, logbooks, and finances that are "pending" sync
       const pendingProjects = await db.projects.filter(p => p.syncStatus === "pending").toArray();
@@ -316,7 +322,7 @@ export default function Home() {
       const totalPending = pendingProjects.length + pendingLogbooks.length + pendingFinances.length;
 
       if (totalPending === 0) {
-        alert("Semua data Anda sudah tersinkronisasi sepenuhnya dengan server MySQL!");
+        if (!silent) alert("Semua data Anda sudah tersinkronisasi sepenuhnya dengan server MySQL!");
         return;
       }
 
@@ -355,21 +361,30 @@ export default function Home() {
           }
         });
 
-        alert(
-          `Sinkronisasi Berhasil!\n\n` +
-          `• Proyek Lahan: ${result.syncedCount.projects} baris\n` +
-          `• Catatan/Logbook: ${result.syncedCount.logbooks} baris\n` +
-          `• Keuangan/Ledger: ${result.syncedCount.finances} baris\n\n` +
-          `Semua data luring berhasil diunggah ke server MySQL.`
-        );
+        if (!silent) {
+          alert(
+            `Sinkronisasi Berhasil!\n\n` +
+            `• Proyek Lahan: ${result.syncedCount.projects} baris\n` +
+            `• Catatan/Logbook: ${result.syncedCount.logbooks} baris\n` +
+            `• Keuangan/Ledger: ${result.syncedCount.finances} baris\n\n` +
+            `Semua data luring berhasil diunggah ke server MySQL.`
+          );
+        }
       } else {
-        alert(`Gagal Sinkronisasi: ${result.message || "Kesalahan tidak diketahui pada server"}`);
+        if (!silent) alert(`Gagal Sinkronisasi: ${result.message || "Kesalahan tidak diketahui pada server"}`);
       }
     } catch (error: any) {
       console.error("Sync error:", error);
-      alert(`Gagal Sinkronisasi: Tidak dapat menghubungi server. Pastikan koneksi server backend aktif.`);
+      if (!silent) alert(`Gagal Sinkronisasi: Tidak dapat menghubungi server. Pastikan koneksi server backend aktif.`);
     }
   };
+
+  // Trigger background sync when coming back online
+  useEffect(() => {
+    if (isOnline) {
+      handleSyncDatabase(true);
+    }
+  }, [isOnline]);
 
   // Financial calculations (Global metrics across all projects)
   const globalExpenses = allFinances.filter(t => t.type === "expense").reduce((acc, t) => acc + t.amount, 0);
@@ -1195,7 +1210,7 @@ export default function Home() {
 
             {/* Bulk manual sync trigger */}
             <button 
-              onClick={handleSyncDatabase}
+              onClick={() => handleSyncDatabase(false)}
               className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-bold py-4 px-6 rounded-2xl shadow-md transition-all active:scale-98 text-sm"
             >
               🔄 Sinkronkan Data ke Server Sekarang
