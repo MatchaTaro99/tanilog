@@ -2,7 +2,7 @@ import { Elysia } from 'elysia';
 import { cors } from '@elysiajs/cors';
 import { db } from './db';
 import { users, projects, logbooks, finances } from './db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
 const port = process.env.PORT || 3000;
 
@@ -69,101 +69,80 @@ const app = new Elysia()
 
       // 1. Sync projects
       if (localProjects && localProjects.length > 0) {
-        for (const proj of localProjects) {
-          const existing = await db.select().from(projects).where(eq(projects.id, proj.id)).limit(1);
-          if (existing.length > 0) {
-            if (new Date(proj.updatedAt) > existing[0].updatedAt) {
-              await db.update(projects).set({
-                name: proj.name,
-                plantType: proj.plantType,
-                plantingDate: proj.plantingDate,
-                status: proj.status,
-                updatedAt: new Date(proj.updatedAt)
-              }).where(eq(projects.id, proj.id));
-              syncedProjectsCount++;
-            }
-          } else {
-            await db.insert(projects).values({
-              id: proj.id,
-              userId: proj.userId,
-              name: proj.name,
-              plantType: proj.plantType,
-              plantingDate: proj.plantingDate,
-              status: proj.status,
-              createdAt: new Date(proj.createdAt),
-              updatedAt: new Date(proj.updatedAt)
-            });
-            syncedProjectsCount++;
+        const mappedProjects = localProjects.map((proj: any) => ({
+          id: proj.id,
+          userId: proj.userId,
+          name: proj.name,
+          plantType: proj.plantType,
+          plantingDate: proj.plantingDate,
+          status: proj.status,
+          createdAt: new Date(proj.createdAt),
+          updatedAt: new Date(proj.updatedAt)
+        }));
+        await db.insert(projects).values(mappedProjects).onDuplicateKeyUpdate({
+          set: {
+            name: sql`IF(VALUES(updated_at) > updated_at, VALUES(name), name)`,
+            plantType: sql`IF(VALUES(updated_at) > updated_at, VALUES(plant_type), plant_type)`,
+            plantingDate: sql`IF(VALUES(updated_at) > updated_at, VALUES(planting_date), planting_date)`,
+            status: sql`IF(VALUES(updated_at) > updated_at, VALUES(status), status)`,
+            updatedAt: sql`IF(VALUES(updated_at) > updated_at, VALUES(updated_at), updated_at)`
           }
-        }
+        });
+        syncedProjectsCount = mappedProjects.length;
       }
 
       // 2. Sync logbooks
       if (localLogbooks && localLogbooks.length > 0) {
-        for (const log of localLogbooks) {
-          const existing = await db.select().from(logbooks).where(eq(logbooks.id, log.id)).limit(1);
-          if (existing.length > 0) {
-            if (new Date(log.updatedAt) > existing[0].updatedAt) {
-              await db.update(logbooks).set({
-                title: log.title,
-                category: log.category,
-                scheduledDate: log.scheduledDate,
-                completedDate: log.completedDate || null,
-                isCompleted: log.isCompleted,
-                notes: log.notes || null,
-                updatedAt: new Date(log.updatedAt)
-              }).where(eq(logbooks.id, log.id));
-              syncedLogbooksCount++;
-            }
-          } else {
-            await db.insert(logbooks).values({
-              id: log.id,
-              projectId: log.projectId,
-              title: log.title,
-              category: log.category,
-              scheduledDate: log.scheduledDate,
-              completedDate: log.completedDate || null,
-              isCompleted: log.isCompleted,
-              notes: log.notes || null,
-              createdAt: new Date(log.createdAt),
-              updatedAt: new Date(log.updatedAt)
-            });
-            syncedLogbooksCount++;
+        const mappedLogbooks = localLogbooks.map((log: any) => ({
+          id: log.id,
+          projectId: log.projectId,
+          title: log.title,
+          category: log.category,
+          scheduledDate: log.scheduledDate,
+          completedDate: log.completedDate || null,
+          isCompleted: log.isCompleted,
+          notes: log.notes || null,
+          createdAt: new Date(log.createdAt),
+          updatedAt: new Date(log.updatedAt)
+        }));
+        await db.insert(logbooks).values(mappedLogbooks).onDuplicateKeyUpdate({
+          set: {
+            title: sql`IF(VALUES(updated_at) > updated_at, VALUES(title), title)`,
+            category: sql`IF(VALUES(updated_at) > updated_at, VALUES(category), category)`,
+            scheduledDate: sql`IF(VALUES(updated_at) > updated_at, VALUES(scheduled_date), scheduled_date)`,
+            completedDate: sql`IF(VALUES(updated_at) > updated_at, VALUES(completed_date), completed_date)`,
+            isCompleted: sql`IF(VALUES(updated_at) > updated_at, VALUES(is_completed), is_completed)`,
+            notes: sql`IF(VALUES(updated_at) > updated_at, VALUES(notes), notes)`,
+            updatedAt: sql`IF(VALUES(updated_at) > updated_at, VALUES(updated_at), updated_at)`
           }
-        }
+        });
+        syncedLogbooksCount = mappedLogbooks.length;
       }
 
       // 3. Sync finances
       if (localFinances && localFinances.length > 0) {
-        for (const fin of localFinances) {
-          const existing = await db.select().from(finances).where(eq(finances.id, fin.id)).limit(1);
-          if (existing.length > 0) {
-            if (new Date(fin.updatedAt) > existing[0].updatedAt) {
-              await db.update(finances).set({
-                type: fin.type,
-                category: fin.category,
-                amount: fin.amount.toString(),
-                notes: fin.notes || null,
-                transactionDate: fin.transactionDate,
-                updatedAt: new Date(fin.updatedAt)
-              }).where(eq(finances.id, fin.id));
-              syncedFinancesCount++;
-            }
-          } else {
-            await db.insert(finances).values({
-              id: fin.id,
-              projectId: fin.projectId,
-              type: fin.type,
-              category: fin.category,
-              amount: fin.amount.toString(),
-              notes: fin.notes || null,
-              transactionDate: fin.transactionDate,
-              createdAt: new Date(fin.createdAt),
-              updatedAt: new Date(fin.updatedAt)
-            });
-            syncedFinancesCount++;
+        const mappedFinances = localFinances.map((fin: any) => ({
+          id: fin.id,
+          projectId: fin.projectId,
+          type: fin.type,
+          category: fin.category,
+          amount: fin.amount.toString(),
+          notes: fin.notes || null,
+          transactionDate: fin.transactionDate,
+          createdAt: new Date(fin.createdAt),
+          updatedAt: new Date(fin.updatedAt)
+        }));
+        await db.insert(finances).values(mappedFinances).onDuplicateKeyUpdate({
+          set: {
+            type: sql`IF(VALUES(updated_at) > updated_at, VALUES(type), type)`,
+            category: sql`IF(VALUES(updated_at) > updated_at, VALUES(category), category)`,
+            amount: sql`IF(VALUES(updated_at) > updated_at, VALUES(amount), amount)`,
+            notes: sql`IF(VALUES(updated_at) > updated_at, VALUES(notes), notes)`,
+            transactionDate: sql`IF(VALUES(updated_at) > updated_at, VALUES(transaction_date), transaction_date)`,
+            updatedAt: sql`IF(VALUES(updated_at) > updated_at, VALUES(updated_at), updated_at)`
           }
-        }
+        });
+        syncedFinancesCount = mappedFinances.length;
       }
 
       console.log(`🔄 Sync completed: ${syncedProjectsCount} projects, ${syncedLogbooksCount} logbooks, ${syncedFinancesCount} finances.`);
