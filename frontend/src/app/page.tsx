@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, seedDatabase } from "@/lib/db";
 
 export default function Home() {
   const [isOnline, setIsOnline] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false); // Bug #1 fix: mutex untuk mencegah concurrent sync calls
   const [activeTab, setActiveTab] = useState<"dashboard" | "logbook" | "finance" | "settings">("dashboard");
 
   // Project Creation Modal state
@@ -311,10 +312,15 @@ export default function Home() {
     setShowPanenForm(false);
   };
 
-  // Synchronize database to the remote backend
-  const handleSyncDatabase = async (silent = false) => {
+  // Bug #6 fix: Gunakan environment variable, bukan hardcoded URL
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+
+  // Bug #1 & #4 fix: useCallback + isSyncing mutex untuk mencegah race condition & stale closure
+  const handleSyncDatabase = useCallback(async (silent = false) => {
+    if (isSyncing) return; // Bug #1: Guard — cegah concurrent calls
+    setIsSyncing(true);
     try {
-      // 1. Fetch all local projects, logbooks, and finances that are "pending" sync
+      // 1. Fetch all local records that are "pending" sync
       const pendingProjects = await db.projects.filter(p => p.syncStatus === "pending").toArray();
       const pendingLogbooks = await db.logbooks.filter(l => l.syncStatus === "pending").toArray();
       const pendingFinances = await db.finances.filter(f => f.syncStatus === "pending").toArray();
@@ -327,7 +333,7 @@ export default function Home() {
       }
 
       // 2. Send the pending data in a batch to the backend
-      const response = await fetch("http://localhost:3000/api/sync", {
+      const response = await fetch(`${API_URL}/api/sync`, { // Bug #6 fix: pakai env var
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -342,21 +348,21 @@ export default function Home() {
       const result = await response.json();
 
       if (result.status === "success") {
-        // 3. Mark all successfully synchronized records as "synced" in a single transaction
+        // 3. Mark all records as "synced" — Bug #5 fix: JANGAN ubah updatedAt agar tidak memicu sync ulang
         await db.transaction("rw", [db.projects, db.logbooks, db.finances], async () => {
           for (const proj of pendingProjects) {
             if (proj.id) {
-              await db.projects.update(proj.id, { syncStatus: "synced", updatedAt: new Date() });
+              await db.projects.update(proj.id, { syncStatus: "synced" }); // Bug #5: Hapus updatedAt: new Date()
             }
           }
           for (const log of pendingLogbooks) {
             if (log.id) {
-              await db.logbooks.update(log.id, { syncStatus: "synced", updatedAt: new Date() });
+              await db.logbooks.update(log.id, { syncStatus: "synced" }); // Bug #5: Hapus updatedAt: new Date()
             }
           }
           for (const fin of pendingFinances) {
             if (fin.id) {
-              await db.finances.update(fin.id, { syncStatus: "synced", updatedAt: new Date() });
+              await db.finances.update(fin.id, { syncStatus: "synced" }); // Bug #5: Hapus updatedAt: new Date()
             }
           }
         });
@@ -376,15 +382,17 @@ export default function Home() {
     } catch (error: any) {
       console.error("Sync error:", error);
       if (!silent) alert(`Gagal Sinkronisasi: Tidak dapat menghubungi server. Pastikan koneksi server backend aktif.`);
+    } finally {
+      setIsSyncing(false); // Bug #1 fix: Selalu reset flag, meski ada error
     }
-  };
+  }, [isSyncing, API_URL]); // Bug #4 fix: Dependency array yang benar
 
-  // Trigger background sync when coming back online
+  // Trigger background sync when coming back online — Bug #4 fix: handleSyncDatabase ada di deps
   useEffect(() => {
     if (isOnline) {
       handleSyncDatabase(true);
     }
-  }, [isOnline]);
+  }, [isOnline, handleSyncDatabase]);
 
   // Financial calculations (Global metrics across all projects)
   const globalExpenses = allFinances.filter(t => t.type === "expense").reduce((acc, t) => acc + t.amount, 0);
@@ -1208,12 +1216,27 @@ export default function Home() {
               </div>
             </section>
 
-            {/* Bulk manual sync trigger */}
+            {/* Bulk manual sync trigger — Bug #8 fix: loading state & disabled saat isSyncing */}
             <button 
               onClick={() => handleSyncDatabase(false)}
-              className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-bold py-4 px-6 rounded-2xl shadow-md transition-all active:scale-98 text-sm"
+              disabled={isSyncing}
+              className={`w-full text-white font-bold py-4 px-6 rounded-2xl shadow-md transition-all text-sm flex items-center justify-center gap-2 ${
+                isSyncing
+                  ? "bg-emerald-600 opacity-70 cursor-not-allowed"
+                  : "bg-emerald-800 hover:bg-emerald-950 active:scale-95"
+              }`}
             >
-              🔄 Sinkronkan Data ke Server Sekarang
+              {isSyncing ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                  Menyinkronkan...
+                </>
+              ) : (
+                <>🔄 Sinkronkan Data ke Server Sekarang</>
+              )}
             </button>
           </div>
         )}
